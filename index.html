@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>O Pato Impossível</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #17251d; font-family: system-ui, Arial, sans-serif; overscroll-behavior: none; touch-action: none; }
+  #game { position: relative; width: 100vw; height: 100dvh; min-height: 420px; overflow: hidden; cursor: crosshair; user-select: none; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .hud { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; color: #fff; z-index: 2; }
+  .panel { background: #101a18d9; border: 1px solid #ffffff35; border-radius: 12px; padding: 9px 14px; box-shadow: 0 5px 18px #0003; text-align: center; min-width: 105px; }
+  .panel small { display: block; font-size: 10px; letter-spacing: 1.5px; color: #b9c9bd; text-transform: uppercase; }
+  .panel strong { font-size: 20px; }
+  .bar { width: 70px; height: 10px; margin: 8px auto 4px; border-radius: 6px; background: #ffffff25; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 100%; background: #6fd46f; border-radius: 6px; }
+  .bar i.loading { background: #e4b84e; }
+  #mute { position: absolute; top: 18px; right: 16px; z-index: 3; padding: 8px 12px; font-size: 18px; background: #101a18d9; color: #fff; border: 1px solid #ffffff35; }
+  #mute:hover { background: #23372f; }
+  #message { position: absolute; top: 95px; left: 50%; transform: translateX(-50%); width: min(90%, 500px); text-align: center; color: white; text-shadow: 0 2px 5px #000; font-weight: 700; font-size: clamp(14px, 2vw, 19px); pointer-events: none; }
+  #hint { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); width: max-content; max-width: 92%; color: #fff; background: #101a18d9; border: 1px solid #ffffff35; border-radius: 10px; padding: 9px 14px; font-size: 12px; text-align: center; }
+  #start { position: absolute; inset: 0; display: grid; place-items: center; background: #08130db0; z-index: 5; }
+  .modal { width: min(90%, 430px); padding: 28px; border-radius: 18px; background: #17251ff2; color: white; text-align: center; border: 1px solid #ffffff35; box-shadow: 0 20px 70px #0008; }
+  .modal h1 { margin: 0 0 8px; font-size: 30px; }
+  .modal p { color: #d0ddd3; line-height: 1.5; }
+  button { border: 0; border-radius: 10px; background: #e4b84e; color: #241c0b; font-weight: 800; padding: 13px 24px; font-size: 15px; cursor: pointer; }
+  button:hover { background: #f2ca67; transform: translateY(-1px); }
+  @media (max-width: 600px) {
+    .hud { top: max(8px, env(safe-area-inset-top)); gap: 4px; }
+    .panel { min-width: 66px; padding: 6px 6px; border-radius: 9px; }
+    .panel small { font-size: 8px; letter-spacing: .5px; }
+    .panel strong { font-size: 16px; }
+    .bar { width: 50px; margin: 6px auto 3px; }
+    #mute { top: auto; bottom: 62px; right: 10px; padding: 6px 10px; min-height: 40px; }
+    #message { top: 72px; width: 94%; font-size: 14px; }
+    #hint { bottom: max(10px, env(safe-area-inset-bottom)); font-size: 11px; padding: 8px 10px; }
+    .modal { padding: 23px 18px; }
+    .modal h1 { font-size: 26px; }
+    button { min-height: 48px; }
+  }
+  @media (max-height: 560px) and (orientation: landscape) {
+    .hud { top: 5px; }
+    .panel { padding: 4px 7px; }
+    #message { top: 58px; }
+    #hint { bottom: 5px; }
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <canvas id="scene"></canvas>
+  <div class="hud">
+    <div class="panel"><small>Disparos</small><strong id="shots">0</strong></div>
+    <div class="panel"><small>Acertos</small><strong id="hits">0</strong></div>
+    <div class="panel"><small>Precisão real</small><strong>0,01%</strong></div>
+    <div class="panel"><small>Recarga</small><div class="bar"><i id="reloadFill"></i></div></div>
+  </div>
+  <button id="mute" title="Som (tecla M)">🔊</button>
+  <div id="message">O pato está ali. Parece fácil.</div>
+  <div id="hint">TOQUE na tela para mirar e atirar · computador: MOUSE ou ESPAÇO · M = som</div>
+  <div id="start">
+    <div class="modal">
+      <h1>O Pato Impossível</h1>
+      <p>Um pato. Uma fazenda. Uma espingarda.<br>Você tem <b>0,01% de chance</b> de acertar cada disparo.<br>O pato não está preocupado.<br><small>🔊 Jogue com o som ligado</small></p>
+      <button id="play">COMEÇAR</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  const game = document.getElementById('game');
+  const shotsEl = document.getElementById('shots');
+  const hitsEl = document.getElementById('hits');
+  const reloadFill = document.getElementById('reloadFill');
+  const muteBtn = document.getElementById('mute');
+  const message = document.getElementById('message');
+  const start = document.getElementById('start');
+
+  /* =====================================================
+     ÁUDIO — tudo sintetizado com Web Audio (sem arquivos)
+     ===================================================== */
+  const Sfx = (() => {
+    let ac, master, musicBus, sfxBus, noiseBuf, timer = null;
+    let nextTime = 0, step = 0, muted = false;
+    const SD = 60 / 168 / 2; // duração de uma colcheia (168 bpm, bem animado)
+    const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+
+    // Melodia (MIDI) em 8 compassos de 8 colcheias — estilo country/polca de fazenda
+    const MEL = [
+      [76,79,76,72,76,79,84,79], // C
+      [77,81,77,72,77,81,84,81], // F
+      [79,76,72,76,79,76,72,67], // C
+      [74,79,83,79,74,71,74,null], // G
+      [76,76,79,79,84,84,79,76], // C
+      [77,77,81,81,84,81,77,72], // F
+      [79,83,79,74,79,83,86,83], // G
+      [84,79,76,72,76,79,72,null] // C
+    ];
+    const CHORDS = [
+      { root: 36, fifth: 43, notes: [60,64,67] }, // C
+      { root: 41, fifth: 48, notes: [60,65,69] }, // F
+      { root: 36, fifth: 43, notes: [60,64,67] }, // C
+      { root: 43, fifth: 50, notes: [59,62,67] }, // G
+      { root: 36, fifth: 43, notes: [60,64,67] }, // C
+      { root: 41, fifth: 48, notes: [60,65,69] }, // F
+      { root: 43, fifth: 50, notes: [59,62,67] }, // G
+      { root: 36, fifth: 43, notes: [60,64,67] }  // C
+    ];
+
+    function init() {
+      if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      ac = new AC();
+      const comp = ac.createDynamicsCompressor();
+      master = ac.createGain(); master.gain.value = muted ? 0 : 0.85;
+      master.connect(comp); comp.connect(ac.destination);
+      musicBus = ac.createGain(); musicBus.gain.value = 0.45; musicBus.connect(master);
+      sfxBus = ac.createGain(); sfxBus.gain.value = 1; sfxBus.connect(master);
+      noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      startMusic();
+    }
+
+    function pluck(freq, t, dur, vol, type) {
+      const o = ac.createOscillator(); o.type = type; o.frequency.value = freq;
+      const f = ac.createBiquadFilter(); f.type = 'lowpass';
+      f.frequency.setValueAtTime(Math.min(freq * 6, 12000), t);
+      f.frequency.exponentialRampToValueAtTime(Math.max(freq * 1.2, 200), t + dur);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(f); f.connect(g); g.connect(musicBus);
+      o.start(t); o.stop(t + dur + 0.05);
+    }
+    function noiseHit(bus, t, dur, vol, ftype, freq, q) {
+      const s = ac.createBufferSource(); s.buffer = noiseBuf;
+      const f = ac.createBiquadFilter(); f.type = ftype; f.frequency.value = freq; if (q) f.Q.value = q;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      s.connect(f); f.connect(g); g.connect(bus);
+      s.start(t, Math.random() * 1.5, dur + 0.05);
+    }
+    function slideWhistle(t, up) {
+      const o = ac.createOscillator(); o.type = 'sine';
+      const f0 = up ? 500 : 1500, f1 = up ? 1700 : 380;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.exponentialRampToValueAtTime(f1, t + 0.32);
+      const lfo = ac.createOscillator(); lfo.frequency.value = 9;
+      const lg = ac.createGain(); lg.gain.value = 25;
+      lfo.connect(lg); lg.connect(o.frequency);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.36);
+      o.connect(g); g.connect(musicBus);
+      o.start(t); lfo.start(t); o.stop(t + 0.4); lfo.stop(t + 0.4);
+    }
+
+    function scheduleStep(t) {
+      const bar = Math.floor(step / 8) % 8, s = step % 8, ch = CHORDS[bar];
+      // baixo (oom)
+      if (s === 0) pluck(mtof(ch.root), t, 0.26, 0.6, 'triangle');
+      if (s === 4) pluck(mtof(ch.fifth), t, 0.26, 0.55, 'triangle');
+      // acorde (pah) nos contratempos
+      if (s === 2 || s === 6) ch.notes.forEach(n => pluck(mtof(n), t, 0.12, 0.085, 'square'));
+      // "washboard" (tábua de lavar) em todas as colcheias
+      noiseHit(musicBus, t, 0.035, s % 2 ? 0.1 : 0.05, 'highpass', 6500);
+      // melodia de banjo — com variações malucas aleatórias
+      let n = MEL[bar][s];
+      if (n) {
+        const r = Math.random();
+        if (r < 0.10) n += [12, -12, 7, 5, 2][Math.floor(Math.random() * 5)];
+        if (s % 2 && Math.random() < 0.15) pluck(mtof(n - 1), t - 0.045, 0.08, 0.14, 'sawtooth'); // nota de graça
+        pluck(mtof(n), t, 0.22, 0.22, 'sawtooth');
+      }
+      // apito deslizante maluco
+      if ((s === 7 && bar % 4 === 3) || Math.random() < 0.012) slideWhistle(t, Math.random() < 0.5);
+      step++;
+    }
+    function tick() {
+      while (nextTime < ac.currentTime + 0.25) { scheduleStep(nextTime); nextTime += SD; }
+    }
+    function startMusic() {
+      if (timer) return;
+      nextTime = ac.currentTime + 0.1; step = 0;
+      timer = setInterval(tick, 40);
+    }
+
+    /* ---------- Efeitos ---------- */
+    function click(t, vol) {
+      noiseHit(sfxBus, t, 0.05, vol, 'bandpass', 2600, 5);
+      const o = ac.createOscillator(); o.type = 'square';
+      o.frequency.setValueAtTime(1400, t); o.frequency.exponentialRampToValueAtTime(500, t + 0.04);
+      const g = ac.createGain(); g.gain.setValueAtTime(vol * 0.35, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + 0.06);
+    }
+    function shot() {
+      if (!ac) return; const t = ac.currentTime;
+      // estrondo
+      const s = ac.createBufferSource(); s.buffer = noiseBuf;
+      const f = ac.createBiquadFilter(); f.type = 'lowpass';
+      f.frequency.setValueAtTime(5500, t); f.frequency.exponentialRampToValueAtTime(260, t + 0.32);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(1.0, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+      s.connect(f); f.connect(g); g.connect(sfxBus); s.start(t, Math.random(), 0.5);
+      // estalo agudo
+      noiseHit(sfxBus, t, 0.07, 0.7, 'highpass', 2200);
+      // pancada grave
+      const o = ac.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(34, t + 0.25);
+      const og = ac.createGain(); og.gain.setValueAtTime(1.0, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      o.connect(og); og.connect(sfxBus); o.start(t); o.stop(t + 0.32);
+      // recarga: "tchic-tchac" da bomba da espingarda durante os 0,5 s
+      click(t + 0.17, 0.5);
+      click(t + 0.34, 0.6);
+    }
+    function dry() { if (!ac) return; click(ac.currentTime, 0.15); }
+    function scream() {
+      if (!ac) return; const t = ac.currentTime;
+      const pitch = 0.9 + Math.random() * 0.3;
+      const mk = (detune) => {
+        const o = ac.createOscillator(); o.type = 'sawtooth'; o.detune.value = detune;
+        o.frequency.setValueAtTime(420 * pitch, t);
+        o.frequency.exponentialRampToValueAtTime(1150 * pitch, t + 0.09);
+        o.frequency.exponentialRampToValueAtTime(820 * pitch, t + 0.34);
+        o.frequency.exponentialRampToValueAtTime(430 * pitch, t + 0.62);
+        const vib = ac.createOscillator(); vib.frequency.value = 15;
+        const vg = ac.createGain(); vg.gain.value = 45;
+        vib.connect(vg); vg.connect(o.frequency);
+        // modulação de amplitude = "buzz" característico de quack
+        const am = ac.createGain(); am.gain.value = 0.55;
+        const amL = ac.createOscillator(); amL.frequency.value = 24;
+        const amG = ac.createGain(); amG.gain.value = 0.45;
+        amL.connect(amG); amG.connect(am.gain);
+        const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1300; bp.Q.value = 1.8;
+        const env = ac.createGain();
+        env.gain.setValueAtTime(0.0001, t);
+        env.gain.exponentialRampToValueAtTime(0.55, t + 0.02);
+        env.gain.setValueAtTime(0.55, t + 0.35);
+        env.gain.exponentialRampToValueAtTime(0.0001, t + 0.68);
+        o.connect(am); am.connect(bp); bp.connect(env); env.connect(sfxBus);
+        [o, vib, amL].forEach(x => { x.start(t); x.stop(t + 0.72); });
+      };
+      mk(-12); mk(14);
+      noiseHit(sfxBus, t, 0.55, 0.22, 'bandpass', 2600, 1.2); // rouquidão do grito
+    }
+    function fanfare() {
+      if (!ac) return; const t = ac.currentTime;
+      [60, 64, 67, 72, 76, 79, 84].forEach((m, i) => {
+        const o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = mtof(m);
+        const g = ac.createGain(); const st = t + i * 0.08;
+        g.gain.setValueAtTime(0.0001, st); g.gain.exponentialRampToValueAtTime(0.4, st + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, st + 0.35);
+        o.connect(g); g.connect(sfxBus); o.start(st); o.stop(st + 0.4);
+      });
+    }
+    function toggleMute() {
+      muted = !muted;
+      if (master) master.gain.value = muted ? 0 : 0.85;
+      muteBtn.textContent = muted ? '🔇' : '🔊';
+    }
+    function setHidden(hidden) {
+      if (!ac) return;
+      if (hidden) ac.suspend(); else if (!muted || true) ac.resume();
+    }
+    return { init, shot, dry, scream, fanfare, toggleMute, setHidden };
+  })();
+
+  /* =====================================================
+     JOGO
+     ===================================================== */
+  let w, h, dpr, shots = 0, hits = 0, running = false;
+  let mouse = { x: 0, y: 0 };
+  let duck = { x: 0, y: 0, dir: 1, speed: 0.65, bob: 0, pause: 0, fear: 0, jump: 0, jumpV: 0, dodgeCooldown: 0, quackBubble: 0, quackNext: 2.5 };
+  let bullets = [], particles = [], last = 0, elapsed = 0, quackTimer = 0;
+  const chance = 0.0001; // 0,01% por disparo
+  const RELOAD_TIME = 0.5; // segundos entre disparos
+  let reload = 0;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = game.clientWidth; h = game.clientHeight;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    duck.y = h * 0.64;
+    if (!duck.x) duck.x = w * 0.68;
+    draw();
+  }
+  window.addEventListener('resize', resize);
+
+  function ellipse(x,y,rx,ry,color) {
+    ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fill();
+  }
+  function drawCloud(x,y,s) {
+    ellipse(x,y,24*s,13*s,'#ffffffb8'); ellipse(x+20*s,y-7*s,20*s,16*s,'#ffffffc9'); ellipse(x+39*s,y,25*s,12*s,'#ffffffb8');
+  }
+  function drawFarm() {
+    const sky = ctx.createLinearGradient(0,0,0,h);
+    sky.addColorStop(0,'#78c5e8'); sky.addColorStop(.57,'#d5e9c5'); sky.addColorStop(1,'#73934c');
+    ctx.fillStyle=sky; ctx.fillRect(0,0,w,h);
+    ellipse(w*.82,h*.16,42,42,'#ffe89b');
+    drawCloud(w*.18,h*.16,.85); drawCloud(w*.52,h*.11,.62);
+    // distant hills
+    ctx.fillStyle='#86a96c'; ctx.beginPath(); ctx.moveTo(0,h*.48);
+    ctx.quadraticCurveTo(w*.18,h*.30,w*.37,h*.48); ctx.quadraticCurveTo(w*.62,h*.28,w*.82,h*.48); ctx.lineTo(w,h*.55); ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.fill();
+    // fields
+    ctx.fillStyle='#668d42'; ctx.fillRect(0,h*.53,w,h*.47);
+    ctx.fillStyle='#89a94f'; ctx.beginPath(); ctx.moveTo(0,h*.68); ctx.quadraticCurveTo(w*.5,h*.53,w,h*.7); ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.fill();
+    // crop rows
+    ctx.strokeStyle='#547b37'; ctx.lineWidth=3;
+    for(let i=-2;i<9;i++){ ctx.beginPath(); ctx.moveTo(w*.42+i*45,h); ctx.lineTo(w*.54+i*22,h*.68); ctx.stroke(); }
+    // barn
+    const bx=w*.08, by=h*.37, bw=Math.min(150,w*.18), bh=h*.23;
+    ctx.fillStyle='#a94232'; ctx.fillRect(bx,by+bh*.3,bw,bh*.7);
+    ctx.fillStyle='#71332b'; ctx.beginPath(); ctx.moveTo(bx-12,by+bh*.32); ctx.lineTo(bx+bw*.5,by); ctx.lineTo(bx+bw+12,by+bh*.32); ctx.fill();
+    ctx.fillStyle='#f1d6a8'; ctx.fillRect(bx+bw*.39,by+bh*.52,bw*.23,bh*.48);
+    ctx.strokeStyle='#f1d6a8'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(bx+bw*.39,by+bh*.52); ctx.lineTo(bx+bw*.62,by+bh); ctx.moveTo(bx+bw*.62,by+bh*.52); ctx.lineTo(bx+bw*.39,by+bh); ctx.stroke();
+    // fence
+    ctx.strokeStyle='#e5d2a2'; ctx.lineWidth=6;
+    for(let i=0;i<7;i++){let x=w*.53+i*w*.075; ctx.beginPath();ctx.moveTo(x,h*.61);ctx.lineTo(x,h*.77);ctx.stroke();}
+    ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(w*.51,h*.65);ctx.lineTo(w,h*.65);ctx.moveTo(w*.51,h*.73);ctx.lineTo(w,h*.73);ctx.stroke();
+    // foreground grass blades
+    ctx.strokeStyle='#426d32'; ctx.lineWidth=2;
+    for(let i=0;i<100;i++){let x=(i*83)%w,y=h*.77+((i*37)%(Math.max(1,h*.22)));ctx.beginPath();ctx.moveTo(x,y+8);ctx.lineTo(x-4,y-5);ctx.stroke();}
+  }
+  function drawDuck() {
+    const x=duck.x, y=duck.y + Math.sin(duck.bob)*3 - duck.jump, s=Math.max(.72,Math.min(1.15,w/900));
+    // Expressão de pânico: penas arrepiadas.
+    if (duck.fear > 0) {
+      ctx.save();
+      ctx.strokeStyle = '#fff8dc'; ctx.lineWidth = 2.5;
+      for (let i=0;i<3;i++) {
+        const px=x-22+i*22, py=y-54-Math.sin(duck.bob*2+i)*3;
+        ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px-3,py-10); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    ctx.save(); ctx.translate(x,y); ctx.scale(duck.dir,1);
+    // shadow
+    ellipse(0,26*s,39*s,7*s,'#263d2580');
+    // feet
+    ctx.strokeStyle='#d77c25';ctx.lineWidth=4*s;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(-8*s,16*s);ctx.lineTo(-11*s,27*s);ctx.lineTo(-19*s,27*s);ctx.moveTo(13*s,16*s);ctx.lineTo(15*s,27*s);ctx.lineTo(23*s,27*s);ctx.stroke();
+    // body and wing
+    ellipse(0,0,34*s,23*s,'#f4f0d8'); ellipse(-5*s,3*s,19*s,13*s,'#d8d2b6');
+    // neck/head
+    ctx.strokeStyle='#f4f0d8';ctx.lineWidth=17*s;ctx.beginPath();ctx.moveTo(19*s,-8*s);ctx.quadraticCurveTo(27*s,-28*s,21*s,-33*s);ctx.stroke();
+    ellipse(22*s,-34*s,13*s,12*s,'#f4f0d8');
+    // beak (abre quando está com medo)
+    ctx.fillStyle='#e59b2d';
+    if (duck.fear > 0) {
+      ctx.beginPath();ctx.moveTo(31*s,-36*s);ctx.lineTo(47*s,-40*s);ctx.lineTo(32*s,-32*s);ctx.fill();
+      ctx.beginPath();ctx.moveTo(32*s,-31*s);ctx.lineTo(46*s,-24*s);ctx.lineTo(31*s,-27*s);ctx.fill();
+    } else {
+      ctx.beginPath();ctx.moveTo(31*s,-34*s);ctx.lineTo(47*s,-30*s);ctx.lineTo(31*s,-26*s);ctx.fill();
+    }
+    // eye
+    ellipse(25*s,-37*s,(duck.fear>0?3.2:2.2)*s,(duck.fear>0?4:2.5)*s,'#20251d');
+    ctx.strokeStyle='#8e8a78';ctx.lineWidth=1.5*s;ctx.beginPath();ctx.moveTo(21*s,-42*s);ctx.lineTo(29*s,-41*s);ctx.stroke();
+    ctx.restore();
+
+    // Balão de fala ocasional do pato.
+    if (duck.quackBubble > 0) {
+      ctx.save();
+      const bx = x + 38, by = y - 72 - duck.jump;
+      ctx.globalAlpha = Math.min(1, duck.quackBubble * 2.5);
+      ctx.fillStyle = '#fffdf2';
+      ctx.strokeStyle = '#4b493e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(bx - 4, by - 19, 91, 29, 9);
+      ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bx + 5, by + 9); ctx.lineTo(bx - 2, by + 17); ctx.lineTo(bx + 16, by + 9); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#29291f';
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Quac, quac!', bx + 41, by);
+      ctx.restore();
+    }
+  }
+  function drawShooter() {
+    const x=w*.5, y=h*.91;
+    // back-facing shooter
+    ellipse(x,y+5,31,13,'#18231d');
+    ctx.fillStyle='#293c32';ctx.beginPath();ctx.moveTo(x-23,y-34);ctx.lineTo(x+23,y-34);ctx.lineTo(x+30,y+9);ctx.lineTo(x-30,y+9);ctx.fill();
+    ellipse(x,y-43,17,18,'#d6a27c');
+    // hat
+    ctx.fillStyle='#59452d';ctx.beginPath();ctx.ellipse(x,y-54,23,7,0,0,Math.PI*2);ctx.fill();ctx.fillRect(x-14,y-67,28,14);
+    // arms and shotgun aimed toward mouse (com coice ao atirar)
+    const dx=mouse.x-x, dy=mouse.y-(y-28), a=Math.atan2(dy,dx);
+    const recoil = Math.max(0, reload - (RELOAD_TIME - 0.12)) / 0.12 * 8;
+    ctx.save();ctx.translate(x,y-26);ctx.rotate(a);ctx.translate(-recoil,0);
+    ctx.strokeStyle='#d6a27c';ctx.lineWidth=10;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(24,0);ctx.stroke();
+    ctx.fillStyle='#30302b';ctx.fillRect(12,-5,57,8);ctx.fillStyle='#9a7444';ctx.fillRect(24,-2,18,5);ctx.fillRect(57,-3,17,4);
+    ctx.restore();
+    // clarão do cano
+    if (recoil > 1) {
+      ctx.save();ctx.translate(x,y-26);ctx.rotate(a);
+      ctx.fillStyle='#ffd978cc';ctx.beginPath();ctx.moveTo(72,0);ctx.lineTo(96,-9);ctx.lineTo(88,0);ctx.lineTo(96,9);ctx.fill();
+      ctx.restore();
+    }
+  }
+  function drawCrosshair() {
+    ctx.save();ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.shadowColor='#000';ctx.shadowBlur=4;
+    ctx.beginPath();ctx.arc(mouse.x,mouse.y,10,0,Math.PI*2);ctx.moveTo(mouse.x-17,mouse.y);ctx.lineTo(mouse.x-5,mouse.y);ctx.moveTo(mouse.x+5,mouse.y);ctx.lineTo(mouse.x+17,mouse.y);ctx.moveTo(mouse.x,mouse.y-17);ctx.lineTo(mouse.x,mouse.y-5);ctx.moveTo(mouse.x,mouse.y+5);ctx.lineTo(mouse.x,mouse.y+17);ctx.stroke();
+    // anel de recarga
+    if (reload > 0) {
+      const p = 1 - reload / RELOAD_TIME;
+      ctx.strokeStyle='#e4b84e';ctx.lineWidth=3;ctx.beginPath();
+      ctx.arc(mouse.x,mouse.y,20,-Math.PI/2,-Math.PI/2+p*Math.PI*2);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function draw() {
+    if(!w||!h)return;
+    drawFarm();
+    drawDuck();
+    drawShooter();
+    for(const b of bullets){ctx.strokeStyle='#f8e7a0';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-b.vx*.025,b.y-b.vy*.025);ctx.stroke();}
+    for(const p of particles){ctx.globalAlpha=Math.max(0,p.life);ellipse(p.x,p.y,3,3,p.color);ctx.globalAlpha=1;}
+    if(running)drawCrosshair();
+  }
+  function shoot() {
+    if(!running)return;
+    // Recarga: 0,5 s entre disparos
+    if (reload > 0) { Sfx.dry(); return; }
+    reload = RELOAD_TIME;
+    Sfx.shot();
+    shots++; shotsEl.textContent=shots;
+    const sx=w*.5, sy=h*.88;
+    const speed=1500;
+    const lucky=Math.random()<chance;
+    // Even a lucky shot only counts if it intersects the duck.
+    let tx=mouse.x, ty=mouse.y;
+    if(lucky){tx=duck.x;ty=duck.y-5;}
+    const dist=Math.hypot(tx-sx,ty-sy)||1;
+    const vx=(tx-sx)/dist*speed;
+    const vy=(ty-sy)/dist*speed;
+    bullets.push({x:sx,y:sy,vx,vy,lucky,life:1.2});
+    if(lucky){
+      hits++;hitsEl.textContent=hits;
+      Sfx.fanfare();
+      message.textContent='VOCÊ ACERTOU. O impossível aconteceu.';
+      for(let i=0;i<25;i++)particles.push({x:duck.x,y:duck.y,vx:(Math.random()-.5)*180,vy:(Math.random()-.8)*180,life:1,color:'#fff1b0'});
+      duck.x=Math.random()*(w*.65)+w*.18;
+    } else {
+      const lines=['O pato nem piscou.','Você assustou uma cerca.','O disparo passou a quilômetros.','O pato julgou sua mira.','Quase. Mentira, nem perto.','O vento levou sua dignidade.','O pato continua vivendo sua vida.'];
+      message.textContent=lines[Math.floor(Math.random()*lines.length)];
+    }
+  }
+  function segDist(px,py,x1,y1,x2,y2){
+    const dx=x2-x1, dy=y2-y1, l=dx*dx+dy*dy;
+    let t=l?((px-x1)*dx+(py-y1)*dy)/l:0;
+    t=Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));
+  }
+  function update(dt) {
+    elapsed+=dt; duck.bob+=dt*7; quackTimer+=dt;
+    reload=Math.max(0,reload-dt);
+    const rp=1-reload/RELOAD_TIME;
+    reloadFill.style.width=(rp*100)+'%';
+    reloadFill.className=reload>0?'loading':'';
+    duck.quackBubble=Math.max(0,duck.quackBubble-dt);
+    duck.quackNext-=dt;
+    if (duck.quackNext<=0) {
+      duck.quackBubble=1.25;
+      duck.quackNext=4.5+Math.random()*7;
+    }
+    duck.fear=Math.max(0,duck.fear-dt);
+    duck.dodgeCooldown=Math.max(0,duck.dodgeCooldown-dt);
+    // O pato aterrissa depois do salto de susto.
+    if (duck.jump>0 || duck.jumpV>0) {
+      duck.jump += duck.jumpV*dt;
+      duck.jumpV -= 1050*dt;
+      if (duck.jump<0) { duck.jump=0; duck.jumpV=0; }
+    }
+    if(duck.pause>0)duck.pause-=dt;
+    else {
+      duck.x+=duck.dir*duck.speed*dt*60;
+      if(duck.x>w*.88){duck.dir=-1;duck.pause=.5;}
+      if(duck.x<w*.58){duck.dir=1;duck.pause=.4;}
+      if(Math.random()<dt*.12)duck.speed=.35+Math.random()*.9;
+    }
+    // Detecta tiros que passam perto (checa o trecho percorrido no frame, para nunca "pular" o pato).
+    bullets.forEach(b => {
+      if (b.nearChecked || b.lucky) return;
+      const duckY=duck.y-duck.jump-8;
+      const d=segDist(duck.x, duckY, b.x, b.y, b.x+b.vx*dt, b.y+b.vy*dt);
+      if (d < 62) {
+        b.nearChecked=true;
+        Sfx.scream(); // o pato grita TODA vez que o tiro passa perto
+        duck.fear=1.15;
+        message.textContent='O PATO SE ASSUSTOU E SAIU DA LINHA DE TIRO!';
+        if (duck.dodgeCooldown <= 0) {
+          duck.jumpV=390;
+          duck.dodgeCooldown=.45;
+          const oldX=duck.x;
+          const leftSpace=oldX-w*.12, rightSpace=w*.91-oldX;
+          let direction = rightSpace>leftSpace ? 1 : -1;
+          if (Math.random()<.35) direction*=-1;
+          duck.x=Math.max(w*.12,Math.min(w*.91,oldX+direction*(100+Math.random()*100)));
+          duck.dir=direction;
+          duck.pause=.35;
+          for(let i=0;i<7;i++) particles.push({x:oldX+(Math.random()-.5)*24,y:duckY-20,vx:(Math.random()-.5)*100,vy:-40-Math.random()*80,life:.45,color:'#fff8dc'});
+        }
+      }
+    });
+    bullets=bullets.filter(b=>{b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;return b.life>0&&b.x>-30&&b.x<w+30&&b.y>-30&&b.y<h+30;});
+    particles=particles.filter(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=180*dt;p.life-=dt;return p.life>0;});
+  }
+  function loop(t) {
+    if(!running)return;
+    const dt=Math.min((t-last)/1000||0,.04);last=t;
+    update(dt);draw();requestAnimationFrame(loop);
+  }
+  game.addEventListener('pointermove',e=>{
+    const r=canvas.getBoundingClientRect();
+    mouse.x=e.clientX-r.left; mouse.y=e.clientY-r.top;
+  });
+  game.addEventListener('pointerdown',e=>{
+    if(e.target.closest('button'))return;
+    // No celular, o ponto tocado vira a mira e o toque dispara.
+    const r=canvas.getBoundingClientRect();
+    mouse.x=e.clientX-r.left; mouse.y=e.clientY-r.top;
+    if (e.pointerType === 'touch') e.preventDefault();
+    shoot();
+  });
+  window.addEventListener('keydown',e=>{
+    if(e.code==='Space'){e.preventDefault(); if(!e.repeat) shoot();}
+    if(e.code==='KeyM') Sfx.toggleMute();
+  });
+  muteBtn.addEventListener('click',e=>{e.stopPropagation(); Sfx.toggleMute();});
+  document.addEventListener('visibilitychange',()=>Sfx.setHidden(document.hidden));
+  document.getElementById('play').addEventListener('click',()=>{
+    Sfx.init(); // o áudio só pode iniciar após um clique do jogador
+    start.style.display='none';running=true;last=performance.now();mouse={x:w*.7,y:h*.55};requestAnimationFrame(loop);
+  });
+  resize();
+})();
+</script>
+</body>
+</html>
